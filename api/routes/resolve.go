@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 	"github.com/url_shortener/database"
@@ -16,9 +17,9 @@ var (
 	URL_EXPIRED   = errors.New("URL is expired")
 )
 
-func ResolveURL(shortUrl string) (string, error) {
+func GetOriginalURL(ctx context.Context, shortUrl string) (string, error) {
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	//check if redis has it
@@ -34,7 +35,7 @@ func ResolveURL(shortUrl string) (string, error) {
 	//if not found in redis,  check in db ,if found put in redis and if not found error
 	var expired bool
 	var cacheTTL float64
-	row := database.DB.QueryRow(ctx,
+	err = database.DB.QueryRow(ctx,
 		`select original_url, (expires_at is not null and expires_at<=now()),
 		case
 		    when expires_at is null  then 86400
@@ -43,11 +44,11 @@ func ResolveURL(shortUrl string) (string, error) {
 		from public.urls
 		where short_code=$1	
 		`, shortUrl).Scan(&originalURL, &expired, &cacheTTL)
-	if row != nil {
-		if errors.Is(row, pgx.ErrNoRows) {
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return "", URL_NOT_FOUND
 		}
-		return "", fmt.Errorf("Database Error: %w", row)
+		return "", fmt.Errorf("Database Error: %w", err)
 
 	}
 	//check expiration
@@ -56,13 +57,31 @@ func ResolveURL(shortUrl string) (string, error) {
 	}
 	ttl := time.Duration(cacheTTL * float64(time.Second))
 	if ttl > 0 {
-		row = database.Redis.Set(ctx, "url:"+shortUrl, originalURL, ttl).Err()
+		err = database.Redis.Set(ctx, "url:"+shortUrl, originalURL, ttl).Err()
 
-		if row != nil {
-			fmt.Println("Redis cache error", row)
+		if err != nil {
+			fmt.Println("Redis cache error", err)
 		}
 	}
 	//return orignal key
 	return originalURL, nil
 
+}
+
+func ResolveURL(ctx *fiber.Ctx) error {
+	shortUrl := ctx.Params("url")
+	if shortUrl==""{
+		return ctx.Status(400).JSON(fiber.Map{"error":"Short URL is required"})
+	}
+	originalURL, err := GetOriginalURL(ctx.UserContext(), shortUrl)
+	if err != nil {
+		if errors.Is(err, URL_NOT_FOUND) {
+			return ctx.Status(404).JSON(fiber.Map{"error": "Url not found"})
+		}
+		if errors.Is(err, URL_EXPIRED) {
+			return ctx.Status(410).JSON(fiber.Map{"error": "Url expired"})
+		}
+		return ctx.Status(500).JSON(fiber.Map{"error":"Internal Server error"})
+	}
+	return ctx.Redirect(originalURL,302)
 }

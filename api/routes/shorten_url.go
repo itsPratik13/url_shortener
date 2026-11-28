@@ -23,7 +23,7 @@ type response struct {
 }
 	var validate =validator.New()
 
-func ShortenURL(ctx fiber.Ctx) error{
+func ShortenURL(ctx *fiber.Ctx) error{
 	body:=new(request)  // already a type of *request  as new creates a pointer to request struct
 	/*
 	if declared as body:=request{} then pass &body as address in bodyparser
