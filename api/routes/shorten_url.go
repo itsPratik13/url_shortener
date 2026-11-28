@@ -5,7 +5,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v2"
-	"github.com/ur_shortener/helpers"
+	"github.com/url_shortener/helpers"
 )
 
 type request struct {
